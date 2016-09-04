@@ -26,7 +26,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"log"
 	"encoding/hex"
 )
 
@@ -7275,35 +7274,37 @@ type Linkstate struct {
 }
 
 func (l *Linkstate) DecodeFromBytes(data []byte)error {
+
+	eCode := uint8(BGP_ERROR_UPDATE_MESSAGE_ERROR)
+	eSubCode := uint8(BGP_ERROR_SUB_MALFORMED_ATTRIBUTE_LIST)
+
 	odata:=data
 	l.NlriType = binary.BigEndian.Uint16(odata[0:2])
 	l.NlriLen = binary.BigEndian.Uint16(odata[2:4])
-	odata = odata[4:]
-	odata = odata [:l.NlriLen]
-	//l.Value = odata
+	odata = odata [OFFSET_TLV_TYPE_LENGTH:OFFSET_TLV_TYPE_LENGTH+l.NlriLen]
 	if (l.NlriLen < 0){
-		log.Println("Error Occured")
+		return NewMessageError(eCode, eSubCode, nil, "LinkState NLRI Len is not enough")
 	}
 	switch l.NlriType {
 	case LINKSTATE_NODE_NLRI_TYPE:
 		LSNodeNLRI := &LinkstateNodeNLRI{}
 		_,err :=LSNodeNLRI.DecodeBytes(odata)
 		if err != nil {
-			fmt.Println("Error Occured")
+			return err
 		}
 		l.NodeNlri = *LSNodeNLRI
 	case LINKSTATE_LINK_NLRI_TYPE:
 		LSLinkNLRI := &LinkstateLinkNLRI{}
 		_,err := LSLinkNLRI.DecodeBytes(odata,l.NlriLen)
 		if err != nil {
-			fmt.Println("Error Occured LinkState")
+			return err
 		}
 		l.LinkNlri = *LSLinkNLRI
 	case LINKSTATE_PREFIX_NLRI_TYPE:
 		LSPrefixNLRI := &LinkstatePrefixNLRI{}
 		_,err := LSPrefixNLRI.DecodeBytes(odata)
 		if err!= nil {
-			fmt.Println("Error Occured Linkstate")
+			return err
 		}
 		l.PrefixNlri = *LSPrefixNLRI
 		l.PrefixNlri.Type = "LINKSTATE_PREFIX_NLRI_TYPE"
@@ -7320,19 +7321,19 @@ func (l *Linkstate) Serialize()([]byte , error){
 	case LINKSTATE_NODE_NLRI_TYPE:
 		tempBuf,err :=l.NodeNlri.Serialize()
 		if err != nil {
-			fmt.Println("Error",err)
+			return nil,err
 		}
 		buf = append(buf,tempBuf...)
 	case LINKSTATE_LINK_NLRI_TYPE:
 		tempBuf,err :=l.LinkNlri.Serialize()
 		if err != nil {
-			fmt.Println("Error",err)
+			return nil,err
 		}
 		buf = append(buf,tempBuf...)
 	case LINKSTATE_PREFIX_NLRI_TYPE:
 		tempBuf,err :=l.PrefixNlri.Serialize()
 		if err != nil {
-			fmt.Println("Error",err)
+			return nil,err
 		}
 		buf = append(buf,tempBuf...)
 	}
@@ -7373,14 +7374,12 @@ func (l *Linkstate) String()string {
 func (l *Linkstate) MarshalJSON() ([]byte,error) {
 	switch l.NlriType {
 	case LINKSTATE_NODE_NLRI_TYPE:
-		byte,err := l.NodeNlri.MarshalJSON()
-		return byte,err
+		return l.NodeNlri.MarshalJSON()
 	case LINKSTATE_LINK_NLRI_TYPE:
-		byte,err := l.LinkNlri.MarshalJSON()
-		return byte,err
+		return l.LinkNlri.MarshalJSON()
 	case LINKSTATE_PREFIX_NLRI_TYPE:
-		byte,err := l.PrefixNlri.MarshalJSON()
-		return byte,err
+		return l.PrefixNlri.MarshalJSON()
+
 	}
 	return nil,nil
 }
@@ -7434,6 +7433,8 @@ const (
 	LINKSTATE_LEN_PROTOCOLID = 1
 	LINKSTATE_LEN_IDENTIFIER = 8
 )
+
+const OFFSET_TLV_TYPE_LENGTH = 4
 
 type LinkStateASNTlv struct {
 	Type uint16
@@ -7524,15 +7525,15 @@ func (self *LinkstatePrefixNLRI) DecodeBytes(data []byte)(*LinkstatePrefixNLRI,e
 		tlvLen := binary.BigEndian.Uint16(odata[2:4])
 		switch tlvType {
 		case LINKSTATE_LOCAL_NODE_DESC:
-			self.LocalNodeDesc = NodeDecodeBytes(odata[4:4+self.LocalNodeDesc.Length],tlvType,tlvLen)
-			odata = odata[4+self.LocalNodeDesc.Length:]
+			self.LocalNodeDesc = NodeDecodeBytes(odata[OFFSET_TLV_TYPE_LENGTH:OFFSET_TLV_TYPE_LENGTH+self.LocalNodeDesc.Length],tlvType,tlvLen)
+			odata = odata[OFFSET_TLV_TYPE_LENGTH+self.LocalNodeDesc.Length:]
 		case LINKSTATE_IPREACHABILITY_TLV:
 			self.PrefixDesc.Type = tlvType
 			self.PrefixDesc.Length = tlvLen
 			self.PrefixDesc.PrefixLen = odata[4]
 			self.PrefixDesc.PrefixIP = HexToIP(odata[5:4+self.PrefixDesc.Length])
 			self.PrefixDesc.PrefixIPByte = odata[5:4+self.PrefixDesc.Length]
-			odata = odata[4+self.PrefixDesc.Length:]
+			odata = odata[OFFSET_TLV_TYPE_LENGTH+self.PrefixDesc.Length:]
 		}
 	}
 
@@ -7548,7 +7549,6 @@ func (self *LinkstatePrefixNLRI) String() string{
 	s.WriteString(fmt.Sprintf("{c%d}",self.LocalNodeDesc.ASNTlv.ASNId))
 	s.WriteString(fmt.Sprintf("{b%s}",Long2IP(self.LocalNodeDesc.BGPLSIDTlv.BGPLSId)))
 	s.WriteString(fmt.Sprintf("{s%s}",self.LocalNodeDesc.NodeId))
-
 	s.WriteString(fmt.Sprintf("{P%s/%d}",self.PrefixDesc.PrefixIP,self.PrefixDesc.PrefixLen))
 	return s.String()
 }
@@ -7560,14 +7560,14 @@ func (self *LinkstatePrefixNLRI) Serialize()([]byte,error) {
 	if self.LocalNodeDesc.Length > 0 {
 		nodebuf,err := NodeSerialize(&self.LocalNodeDesc)
 		if err != nil {
-			fmt.Println("Error")
+			return nil,err
 		}
 		buf = append(buf,nodebuf...)
 	}
 	if self.PrefixDesc.Length > 0 {
 		prefixbuf,err := PrefixSerialize(&self.PrefixDesc)
 		if err != nil {
-			fmt.Println("Error")
+			return nil,err
 		}
 		buf = append(buf,prefixbuf...)
 	}
@@ -7593,7 +7593,6 @@ func PrefixSerialize (p *LinkstatePrefixDesc)([]byte,error){
 	binary.BigEndian.PutUint16(buf[0:2],p.Type)
 	binary.BigEndian.PutUint16(buf[2:4],p.Length)
 	buf[4] = p.PrefixLen
-	//ipbuf  := make([]byte,p.PrefixLen)
 	buf = append(buf,p.PrefixIPByte...)
 	return buf,nil
 }
@@ -7612,23 +7611,23 @@ func (self *LinkstateLinkNLRI) DecodeBytes(data []byte,nlriLen uint16)(*Linkstat
 		case LINKSTATE_LOCAL_NODE_DESC:
 			self.LocalNodeDesc.Type = tlvType
 			self.LocalNodeDesc.Length = tlvLen
-			self.LocalNodeDesc = NodeDecodeBytes(odata[4:4+self.LocalNodeDesc.Length],tlvType,tlvLen)
-			odata = odata[4+self.LocalNodeDesc.Length:]
+			self.LocalNodeDesc = NodeDecodeBytes(odata[OFFSET_TLV_TYPE_LENGTH:OFFSET_TLV_TYPE_LENGTH+self.LocalNodeDesc.Length],tlvType,tlvLen)
+			odata = odata[OFFSET_TLV_TYPE_LENGTH+self.LocalNodeDesc.Length:]
 		case LINKSTATE_REMOTE_NODE_DESC:
 			self.RemoteNodeDesc.Type = tlvType
 			self.RemoteNodeDesc.Length = tlvLen
-			self.RemoteNodeDesc = NodeDecodeBytes(odata[4:4+self.RemoteNodeDesc.Length],tlvType,tlvLen)
-			odata = odata[4+self.RemoteNodeDesc.Length:]
+			self.RemoteNodeDesc = NodeDecodeBytes(odata[OFFSET_TLV_TYPE_LENGTH:OFFSET_TLV_TYPE_LENGTH+self.RemoteNodeDesc.Length],tlvType,tlvLen)
+			odata = odata[OFFSET_TLV_TYPE_LENGTH+self.RemoteNodeDesc.Length:]
 		case LINKSTATE_IPV4_INTF_ADDR_TLV:
 			self.LinkDesc.IPv4IntfAddr.Type = tlvType
 			self.LinkDesc.IPv4IntfAddr.Length = tlvLen
 			self.LinkDesc.IPv4IntfAddr.IPv4IntfAddr = net.IP.String(odata[4:8])
-			odata = odata[4+self.LinkDesc.IPv4IntfAddr.Length:]
+			odata = odata[OFFSET_TLV_TYPE_LENGTH+self.LinkDesc.IPv4IntfAddr.Length:]
 		case LINKSTATE_IPV4_NEIG_ADDR_TLV:
 			self.LinkDesc.IPv4NeigAddr.Type = tlvType
 			self.LinkDesc.IPv4NeigAddr.Length = tlvLen
 			self.LinkDesc.IPv4NeigAddr.IPv4NeiAddr = net.IP.String(odata[4:8])
-			odata = odata[4+self.LinkDesc.IPv4NeigAddr.Length:]
+			odata = odata[OFFSET_TLV_TYPE_LENGTH+self.LinkDesc.IPv4NeigAddr.Length:]
 		}
 	}
 	return self,nil
@@ -7666,33 +7665,31 @@ func (self *LinkstateLinkNLRI) Serialize()([]byte,error){
 	if self.LocalNodeDesc.Length > 0 {
 		localnodebuf,err := NodeSerialize(&self.LocalNodeDesc)
 		if err != nil {
-			fmt.Println("Error")
+			return nil,err
 		}
 		buf = append(buf,localnodebuf...)
 	}
 	if self.RemoteNodeDesc.Length > 0 {
 		remotenodebuf,err := NodeSerialize(&self.RemoteNodeDesc)
 		if err != nil {
-			fmt.Println("Error")
+			return nil,err
 		}
 		buf = append(buf,remotenodebuf...)
 	}
 	if self.LinkDesc.IPv4IntfAddr.Length > 0 {
 		ipintbuf,err := IPv4IntSerialize(&self.LinkDesc.IPv4IntfAddr)
 		if err != nil {
-			fmt.Println("Error")
+			return nil,err
 		}
 		buf = append(buf,ipintbuf...)
 	}
 	if self.LinkDesc.IPv4NeigAddr.Length > 0 {
 		ipneibuf,err := IPv4NeiSerialize(&self.LinkDesc.IPv4NeigAddr)
 		if err != nil {
-			fmt.Println("Error")
+			return nil,err
 		}
 		buf = append(buf,ipneibuf...)
 	}
-
-
 	return buf,nil
 }
 
@@ -7720,7 +7717,7 @@ func IPv4IntSerialize (i *LinkstateIPv4IntAddTlv)([]byte,error) {
 	ipbuf := new (bytes.Buffer)
 	err := binary.Write(ipbuf,binary.BigEndian,ip.To4())
 	if err != nil {
-		fmt.Println("Error Occured")
+		return nil,err
 	}
 	buf = append(buf,ipbuf.Bytes()...)
 
@@ -7735,7 +7732,7 @@ func IPv4NeiSerialize (i *LinkstateIPv4NeiAddTlv)([]byte,error){
 	ipbuf := new (bytes.Buffer)
 	err := binary.Write(ipbuf,binary.BigEndian,ip.To4())
 	if err != nil {
-		fmt.Println("Error Occured")
+		return nil, err
 	}
 	buf = append(buf,ipbuf.Bytes()...)
 
@@ -7758,14 +7755,14 @@ func NodeDecodeBytes(data []byte,tlvType,tlvLen uint16)(LinkstateNodeDesc) {
 			Asntlv.Length = tlvLen
 			Asntlv.ASNId = binary.BigEndian.Uint32(odata1[4:8])
 			nodeDesc.ASNTlv = *Asntlv
-			odata1 = odata1[(4+Asntlv.Length):]
+			odata1 = odata1[(OFFSET_TLV_TYPE_LENGTH+Asntlv.Length):]
 		case LINKSTATE_BGP_LS_ID_TLV:
 			BgpLSID := &LinkstateBGPLSIDTlv{}
 			BgpLSID.Type = tlvType
 			BgpLSID.Length = tlvLen
 			BgpLSID.BGPLSId = binary.BigEndian.Uint32(odata1[4:8])
 			nodeDesc.BGPLSIDTlv = *BgpLSID
-			odata1 = odata1[(4+BgpLSID.Length):]
+			odata1 = odata1[(OFFSET_TLV_TYPE_LENGTH+BgpLSID.Length):]
 		case LINKSTATE_IGP_RTR_ID_TLV:
 			IgpRtrID := &LinkstateIGPRtrID{}
 			IgpRtrID.Type = tlvType
@@ -7773,7 +7770,7 @@ func NodeDecodeBytes(data []byte,tlvType,tlvLen uint16)(LinkstateNodeDesc) {
 			IgpRtrID.RtrID = odata1[4:(4+IgpRtrID.Length)]
 			nodeDesc.IGPRtrID = *IgpRtrID
 			nodeDesc.NodeId = isisNodeformat(IgpRtrID.RtrID)
-			odata1 = odata1[(4+IgpRtrID.Length):]
+			odata1 = odata1[(OFFSET_TLV_TYPE_LENGTH+IgpRtrID.Length):]
 		}
 	}
 	return nodeDesc
@@ -7797,14 +7794,14 @@ func (n *LinkstateNodeNLRI) DecodeBytes(data []byte)(*LinkstateNodeNLRI,error) {
 			Asntlv.Length = tlvLen
 			Asntlv.ASNId = binary.BigEndian.Uint32(odata[4:8])
 			n.NodeDesc.ASNTlv = *Asntlv
-			odata = odata[(4+Asntlv.Length):]
+			odata = odata[(OFFSET_TLV_TYPE_LENGTH+Asntlv.Length):]
 		case LINKSTATE_BGP_LS_ID_TLV:
 			BgpLSID := &LinkstateBGPLSIDTlv{}
 			BgpLSID.Type = tlvType
 			BgpLSID.Length = tlvLen
 			BgpLSID.BGPLSId = binary.BigEndian.Uint32(odata[4:8])
 			n.NodeDesc.BGPLSIDTlv = *BgpLSID
-			odata = odata[(4+BgpLSID.Length):]
+			odata = odata[(OFFSET_TLV_TYPE_LENGTH+BgpLSID.Length):]
 		case LINKSTATE_IGP_RTR_ID_TLV:
 			IgpRtrID := &LinkstateIGPRtrID{}
 			IgpRtrID.Type = tlvType
@@ -7812,7 +7809,7 @@ func (n *LinkstateNodeNLRI) DecodeBytes(data []byte)(*LinkstateNodeNLRI,error) {
 			IgpRtrID.RtrID = odata[4:(4+IgpRtrID.Length)]
 			n.NodeDesc.IGPRtrID = *IgpRtrID
 			n.NodeId = isisNodeformat(IgpRtrID.RtrID)
-			odata = odata[(4+IgpRtrID.Length):]
+			odata = odata[(OFFSET_TLV_TYPE_LENGTH+IgpRtrID.Length):]
 		}
 	}
 	return n,nil
@@ -7824,7 +7821,7 @@ func (n *LinkstateNodeNLRI) Serialize()([]byte,error){
 	binary.BigEndian.PutUint64(buf[1:9],n.Identifier)
 	tempBuf,err := NodeSerialize(&n.NodeDesc)
 	if err != nil {
-		fmt.Println("Error")
+		return nil,err
 	}
 	buf = append(buf,tempBuf...)
 	return buf,nil
@@ -7889,7 +7886,6 @@ func (n *LinkstateNodeNLRI) MarshalJSON()([]byte,error) {
 		BgpLSID: Long2IP(n.NodeDesc.BGPLSIDTlv.BGPLSId),
 		NodeID: n.NodeId,
 	})
-
 }
 
 
@@ -7940,7 +7936,6 @@ type PathAttributeLinkstate struct {
 	PathAttribute
 	Value []LinkstateTlvValue
 }
-
 
 func NewLSPathAttributeTlv(Type uint16)(LinkstateTlvValue,error){
 	tlvType := LinkStateAttrType(Type)
@@ -8001,7 +7996,7 @@ func (self *PathAttributeLinkstate) DecodeFromBytes(data []byte) error {
 			return err
 		}
 		if lstlv.Len() > len(value){
-			return NewMessageError(eCode, eSubCode, value, "prefix length is incorrect")
+			return NewMessageError(eCode, eSubCode, value, "length is incorrect")
 		}
 		value = value[lstlv.Len():]
 		self.Value = append(self.Value,lstlv)
@@ -8010,7 +8005,6 @@ func (self *PathAttributeLinkstate) DecodeFromBytes(data []byte) error {
 }
 
 func (self *PathAttributeLinkstate) Serialize() ([]byte,error) {
-	//fmt.Println("In LS PATHATTR Serialize Function")
 	buf := make([]byte,0)
 	for _,lstlv := range self.Value {
 		pbuf,err := lstlv.Serialize()
@@ -8033,7 +8027,7 @@ func (p *PathAttributeLinkstate) MarshalJSON() ([]byte, error) {
 		Value []byte      `json:"value"`
 	}{
 		Type:  p.GetType(),
-		//Value: p.Value,
+		Value: p.PathAttribute.Value,
 	})
 }
 
@@ -8099,10 +8093,9 @@ func NewLinkStateRIDv4Local()*LinkStateRIDv4Local {
 
 func (self *LinkStateRIDv4Local) DecodeFromBytes(data []byte)error {
 	odata := data
-	//offset := uint16(4)
 	self.Type = LS_TLV_TYPE_IPV4_RID_LOCAL
 	self.Length = binary.BigEndian.Uint16(odata[2:4])
-	self.RID = binary.BigEndian.Uint32(odata[4:4+self.Length])
+	self.RID = binary.BigEndian.Uint32(odata[OFFSET_TLV_TYPE_LENGTH:OFFSET_TLV_TYPE_LENGTH+self.Length])
 	return nil
 }
 
@@ -8199,7 +8192,7 @@ func (self *LinkStateISISAreaID) DecodeFromBytes(data []byte)error {
 	odata := data
 	self.Type = LS_TLV_TYPE_ISIS_AREA_ID
 	self.Length = binary.BigEndian.Uint16(odata[2:4])
-	self.AreaID = odata[4:4+self.Length]
+	self.AreaID = odata[OFFSET_TLV_TYPE_LENGTH:OFFSET_TLV_TYPE_LENGTH+self.Length]
 	return nil
 }
 
@@ -8876,7 +8869,7 @@ func (self *SRCapTlv) String() string {
 func (self *SRCapTlv) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type  LinkStateAttrType `json:"type"`
-		Range uint32	`json:"labelRange"`
+		Range uint32		`json:"labelRange"`
 		Value []SRCapSubTlvValue `json:"labelstart"`
 	}{
 		Type: self.Type,
@@ -8906,7 +8899,7 @@ func (self *SRCapSubTlvSIDLabel) DecodeFromBytes(data []byte)error {
     odata := data
     self.Type = SR_CAP_SUBTLV_SID_LABEL
     self.Length = binary.BigEndian.Uint16(odata[2:4])
-    self.SidLabel = odata[4:4+self.Length]
+    self.SidLabel = odata[OFFSET_TLV_TYPE_LENGTH:OFFSET_TLV_TYPE_LENGTH+self.Length]
     return nil
 }
 
