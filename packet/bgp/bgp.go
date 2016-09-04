@@ -7577,9 +7577,9 @@ func (self *LinkstatePrefixNLRI) Serialize()([]byte,error) {
 func (self *LinkstatePrefixNLRI) MarshalJSON()([]byte,error){
 	return json.Marshal(struct {
 		NlriType string `json:"nlritype"`
-		Nodeid string `json:"nodeid"`
-		Prefix string `json:"prefix"`
-		Prefixlen uint8 `json:"prefixlen"`
+		Nodeid string  `json:"nodeid"`
+		Prefix string  `json:"prefix"`
+		Prefixlen uint8  `json:"prefixlen"`
 	}{
 		NlriType: "prefix",
 		Nodeid: self.LocalNodeDesc.NodeId,
@@ -7968,6 +7968,8 @@ func NewLSPathAttributeTlv(Type uint16)(LinkstateTlvValue,error){
 		return NewSRCapTlv(),nil
 	case LS_TLV_TYPE_LAN_ADJ_SID:
 		return NewLanAdjSidTlv(),nil
+	case LS_TLV_TYPE_ADJ_SID:
+		return NewAdjSidTlv(),nil
 	}
 	return &PathAttributeUnknown{},nil
 }
@@ -8753,8 +8755,104 @@ func (self *LanAdjSidTlv) Len()int {
 	return int(self.Length+offset)
 }
 
+type AdjSidFlag uint8
+
+const (
+	BGP_LINKSTATE_ADJ_SID_ADDRESS_FAMILY AdjSidFlag = 1 << 7
+	BGP_LINKSTATE_ADJ_SID_BACKUP 	     AdjSidFlag = 1 << 6
+	BGP_LINKSTATE_ADJ_SID_VALUE          AdjSidFlag = 1 << 5
+	BGP_LINKSTATE_ADJ_SID_LOCAL          AdjSidFlag = 1 << 4
+	BGP_LINKSTATE_ADJ_SID_SET            AdjSidFlag = 1 << 3
+)
+
+func (self AdjSidFlag) String() string {
+	strs := make ([]string,0,5)
+
+	if self&BGP_LINKSTATE_ADJ_SID_ADDRESS_FAMILY > 0 {
+		strs = append(strs,"F")
+	}
+	if self&BGP_LINKSTATE_ADJ_SID_BACKUP > 0 {
+		strs = append(strs,"B")
+	}
+	if self&BGP_LINKSTATE_ADJ_SID_VALUE > 0 {
+		strs = append(strs,"V")
+	}
+	if self&BGP_LINKSTATE_ADJ_SID_LOCAL > 0 {
+		strs = append(strs,"L")
+	}
+	if self&BGP_LINKSTATE_ADJ_SID_SET > 0 {
+		strs = append(strs,"S")
+	}
+	return strings.Join(strs, "|")
+}
+
+type AdjSidTlv struct {
+	Type LinkStateAttrType
+	Length uint16
+	Flags AdjSidFlag
+	Weight uint8
+	Reserved uint16
+	AdjLABEL []byte
+}
+
+func NewAdjSidTlv()*AdjSidTlv {
+	return &AdjSidTlv{
+
+	}
+}
+
+func (self *AdjSidTlv) DecodeFromBytes(data []byte)error {
+	odata := data
+	self.Type = LS_TLV_TYPE_ADJ_SID
+	self.Length = binary.BigEndian.Uint16(odata[2:4])
+	self.Flags = AdjSidFlag(odata[4])
+	self.Weight = uint8(odata[5])
+	self.Reserved = binary.BigEndian.Uint16(odata[6:8])
+	self.AdjLABEL = odata[8:(8+self.Length)-4]
+	return nil
+}
+
+func (self *AdjSidTlv) Serialize()([]byte,error){
+	buf := make([]byte,8)
+	binary.BigEndian.PutUint16(buf[0:2],uint16(self.Type))
+	binary.BigEndian.PutUint16(buf[2:4],uint16(self.Length))
+	buf[4] = uint8(self.Flags)
+	buf[5] = uint8(self.Weight)
+	binary.BigEndian.PutUint16(buf[6:8],uint16(self.Reserved))
+	buf = append(buf,self.AdjLABEL...)
+	return buf,nil
+}
+
+func (self *AdjSidTlv) String()(string){
+	s := bytes.NewBuffer(make([]byte,0))
+	s.WriteString(fmt.Sprintf("[%v]",ParseLabel(self.AdjLABEL)))
+	return s.String()
+}
+
+func (self *AdjSidTlv) MarshalJSON()([]byte,error) {
+	return json.Marshal(struct {
+		Type LinkStateAttrType `json:"type"`
+		AdjLabel uint32		`json:"AdjLabel"`
+		Flags AdjSidFlag		`json:"AdjSidFlags"`
+
+	}{
+		Type: self.Type,
+		AdjLabel: ParseLabel(self.AdjLABEL),
+		Flags: self.Flags,
+
+	})
+}
+
+func (self *AdjSidTlv) Len()int {
+	offset := uint16(4)
+	return int(self.Length+offset)
+}
+
+
+
 type SRCapSubTlvType uint16
 type SRCapAttrFlag uint8
+
 const (
 	SR_CAP_SUBTLV_SID_LABEL	SRCapSubTlvType = 1161
 )
@@ -8778,6 +8876,7 @@ func (self SRCapAttrFlag) String() string {
 	}
 	return strings.Join(strs, "|")
 }
+
 
 type SRCapSubTlvValue interface {
 	Serialize()([]byte,error)
