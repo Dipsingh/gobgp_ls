@@ -1445,6 +1445,7 @@ func (s *BgpServer) GetRib(addr string, family bgp.RouteFamily, prefixes []*Look
 			id = peer.ID()
 		}
 		af := bgp.RouteFamily(family)
+
 		if _, ok := rib.Tables[af]; !ok {
 			err = fmt.Errorf("address family: %s not supported", af)
 			return

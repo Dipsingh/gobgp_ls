@@ -7697,13 +7697,15 @@ func (self *LinkstateLinkNLRI) MarshalJSON() ([]byte,error) {
 	return json.Marshal(struct {
 		NlriType string 	`json:"nlritype"`
 		Protocol string 	`json:"protocol"`
-		LocalRemoteNode string  `json:"localremotenode"`
+		LocalNode string        `json:"localnode"`
+		RemoteNode string	`json:"remotenode"`
 		LocalIP string 		`json:"localip"`
 		RemoteIP string 	`json:"remoteip"`
 	}{
 		NlriType: "link",
 		Protocol: GetProtocolType(self.ProtocolID),
-		LocalRemoteNode: self.LocalNodeDesc.NodeId+":"+self.RemoteNodeDesc.NodeId,
+		LocalNode: self.LocalNodeDesc.NodeId,
+		RemoteNode: self.RemoteNodeDesc.NodeId,
 		LocalIP: self.LinkDesc.IPv4IntfAddr.IPv4IntfAddr,
 		RemoteIP: self.LinkDesc.IPv4NeigAddr.IPv4NeiAddr,
 	})
@@ -8026,10 +8028,10 @@ func (p *PathAttributeLinkstate) String() string {
 func (p *PathAttributeLinkstate) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Type  BGPAttrType `json:"type"`
-		Value []byte      `json:"value"`
+		Value []LinkstateTlvValue     `json:"LSAttributeValue"`
 	}{
 		Type:  p.GetType(),
-		Value: p.PathAttribute.Value,
+		Value: p.Value,
 	})
 }
 
@@ -8418,8 +8420,10 @@ func (self *LinkStateAdminGroup) String()(string){
 func (self *LinkStateAdminGroup) MarshalJSON()([]byte,error) {
 	return json.Marshal(struct {
 		Type LinkStateAttrType `json:"type"`
+		Value []byte 		`json:"value"`
 	}{
-
+		Type: self.Type,
+		Value: self.AdminGroup,
 	})
 }
 
@@ -8586,7 +8590,6 @@ func (self *LinkStateTEDEFMetric) MarshalJSON()([]byte,error) {
 	}{
 		Type: self.Type,
 		Cost: HexToInt(self.DefaultMetric),
-
 	})
 }
 
@@ -8849,7 +8852,6 @@ func (self *AdjSidTlv) Len()int {
 }
 
 
-
 type SRCapSubTlvType uint16
 type SRCapAttrFlag uint8
 
@@ -8876,7 +8878,6 @@ func (self SRCapAttrFlag) String() string {
 	}
 	return strings.Join(strs, "|")
 }
-
 
 type SRCapSubTlvValue interface {
 	Serialize()([]byte,error)

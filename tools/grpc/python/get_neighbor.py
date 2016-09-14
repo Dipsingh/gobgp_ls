@@ -10,6 +10,13 @@ _TIMEOUT_SECONDS = 1
 def run(gobgpd_addr):
     channel = implementations.insecure_channel(gobgpd_addr, 50051)
     with gobgp_pb2.beta_create_GobgpApi_stub(channel) as stub:
+        rib = gobgp_pb2.GetRibRequest()
+        rib.table.type = 2
+        rib.table.family = 2
+        peer = stub.GetRib(rib, _TIMEOUT_SECONDS).peers
+        print(peer)
+
+        '''
         try:
             peers = stub.GetNeighbor(gobgp_pb2.GetNeighborRequest(), _TIMEOUT_SECONDS).peers
             for peer in peers:
@@ -19,9 +26,12 @@ def run(gobgpd_addr):
                 print("  BGP OutQ = %d, Flops = %d" % (peer.info.out_q, peer.info.flops))
                 print("  Hold time is %d, keepalive interval is %d seconds" % (peer.timers.state.negotiated_hold_time, peer.timers.state.keepalive_interval))
                 print("  Configured hold time is %d, keepalive interval is %d seconds" % (peer.timers.config.hold_time, peer.timers.config.keepalive_interval))
-        except ExpirationError, e:
-            print str(e)
+        except ExpirationError as e:
+            print (str(e))
             sys.exit(-1)
+        '''
+
+
 
 if __name__ == '__main__':
     gobgp = sys.argv[1]

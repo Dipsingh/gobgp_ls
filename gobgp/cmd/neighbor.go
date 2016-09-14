@@ -446,6 +446,7 @@ func ShowRoute(pathList []*Path, showAge, showBest, showLabel, isMonitor, printH
 }
 
 func showNeighborRib(r string, name string, args []string) error {
+
 	var resource api.Resource
 	showBest := false
 	showAge := true
@@ -470,13 +471,19 @@ func showNeighborRib(r string, name string, args []string) error {
 		resource = api.Resource_VRF
 	}
 	rf, err := checkAddressFamily(def)
+
+
+
+
 	if err != nil {
 		return err
 	}
+
 	switch rf {
 	case bgp.RF_IPv4_MPLS, bgp.RF_IPv6_MPLS, bgp.RF_IPv4_VPN, bgp.RF_IPv6_VPN:
 		showLabel = true
 	}
+
 
 	arg := &api.Table{
 		Type:   resource,
@@ -606,8 +613,185 @@ func showNeighborRib(r string, name string, args []string) error {
 
 	sort.Sort(ps)
 	ShowRoute(ps, showAge, showBest, showLabel, false, true)
+
 	return nil
 }
+
+
+func ShowNeighborRib(r string, name string, args []string) error {
+	var resource api.Resource
+	showBest := false
+	showAge := true
+	showLabel := false
+	def := addr2AddressFamily(net.ParseIP(name))
+	switch r {
+	case CMD_GLOBAL:
+		def = bgp.RF_IPv4_UC
+		showBest = true
+		resource = api.Resource_GLOBAL
+	case CMD_LOCAL:
+		showBest = true
+		resource = api.Resource_LOCAL
+	case CMD_ADJ_IN, CMD_ACCEPTED, CMD_REJECTED:
+		resource = api.Resource_ADJ_IN
+	case CMD_ADJ_OUT:
+		showAge = false
+		resource = api.Resource_ADJ_OUT
+	case CMD_VRF:
+		def = bgp.RF_IPv4_UC
+		showLabel = true
+		resource = api.Resource_VRF
+	}
+	//rf, err := checkAddressFamily(def)
+	fmt.Println("DEF",def)
+	rf := bgp.RF_LINKSTATE
+
+
+	switch rf {
+	case bgp.RF_IPv4_MPLS, bgp.RF_IPv6_MPLS, bgp.RF_IPv4_VPN, bgp.RF_IPv6_VPN:
+		showLabel = true
+	}
+
+
+	arg := &api.Table{
+		Type:   resource,
+		Family: uint32(rf),
+		Name:   name,
+	}
+
+	if len(args) > 0 {
+		if rf != bgp.RF_IPv4_UC && rf != bgp.RF_IPv6_UC {
+			return fmt.Errorf("route filtering is only supported for IPv4/IPv6 unicast routes")
+		}
+		longerPrefixes := false
+		shorterPrefixes := false
+		if len(args) > 1 {
+			if args[1] == "longer-prefixes" {
+				longerPrefixes = true
+			} else if args[1] == "shorter-prefixes" {
+				shorterPrefixes = true
+			} else {
+				return fmt.Errorf("invalid format for route filtering")
+			}
+		}
+		arg.Destinations = []*api.Destination{
+			&api.Destination{
+				Prefix:          args[0],
+				LongerPrefixes:  longerPrefixes,
+				ShorterPrefixes: shorterPrefixes,
+			},
+		}
+	}
+
+	fmt.Println("Context",context.Background())
+	fmt.Println("ARG",arg)
+	fmt.Println("GETRIB REQUEST",&api.GetRibRequest{Table:arg,})
+	
+	rsp, err := client.GetRib(context.Background(), &api.GetRibRequest{
+		Table: arg,
+	})
+
+	fmt.Println("Reached after RSP")
+
+	if err != nil {
+		return err
+	}
+	rib := rsp.Table
+	switch r {
+	case CMD_LOCAL, CMD_ADJ_IN, CMD_ACCEPTED, CMD_REJECTED, CMD_ADJ_OUT:
+		if len(rib.Destinations) == 0 {
+			peer, err := getNeighbor(name)
+			if err != nil {
+				return err
+			}
+			if peer.Info.BgpState != "BGP_FSM_ESTABLISHED" {
+				return fmt.Errorf("Neighbor %v's BGP session is not established", name)
+			}
+		}
+	}
+
+	isResultSorted := func(rf bgp.RouteFamily) bool {
+		switch rf {
+		case bgp.RF_IPv4_UC, bgp.RF_IPv6_UC, bgp.RF_FS_IPv4_UC, bgp.RF_FS_IPv6_UC, bgp.RF_FS_IPv4_VPN, bgp.RF_FS_IPv6_VPN, bgp.RF_FS_L2_VPN:
+			return true
+		}
+		return false
+	}
+
+	dsts := []*Destination{}
+	counter := 0
+	for _, d := range rib.Destinations {
+		dst, err := ApiStruct2Destination(d)
+		if err != nil {
+			return err
+		}
+		if isResultSorted(rf) && !globalOpts.Json && len(dst.Paths) > 0 {
+			ps := paths{}
+			for _, p := range dst.Paths {
+				switch r {
+				case CMD_ACCEPTED:
+					if !p.Filtered {
+						ps = append(ps, p)
+					}
+				case CMD_REJECTED:
+					if p.Filtered {
+						ps = append(ps, p)
+					}
+				default:
+					ps = append(ps, p)
+				}
+			}
+			sort.Sort(ps)
+			if counter == 0 {
+				ShowRoute(ps, showAge, showBest, showLabel, false, true)
+			} else {
+				ShowRoute(ps, showAge, showBest, showLabel, false, false)
+			}
+			counter++
+		}
+		dsts = append(dsts, dst)
+	}
+
+	if globalOpts.Json {
+		j, _ := json.Marshal(dsts)
+		fmt.Println(string(j))
+		return nil
+	}
+
+	if isResultSorted(rf) && counter != 0 {
+		// we already showed
+		return nil
+	}
+
+	ps := paths{}
+	for _, dst := range dsts {
+		for _, p := range dst.Paths {
+			switch r {
+			case CMD_ACCEPTED:
+				if !p.Filtered {
+					ps = append(ps, p)
+				}
+			case CMD_REJECTED:
+				if p.Filtered {
+					ps = append(ps, p)
+				}
+			default:
+				ps = append(ps, p)
+			}
+		}
+	}
+
+	if len(ps) == 0 {
+		fmt.Println("Network not in table")
+		return nil
+	}
+
+	sort.Sort(ps)
+	ShowRoute(ps, showAge, showBest, showLabel, false, true)
+
+	return nil
+}
+
 
 func resetNeighbor(cmd string, remoteIP string, args []string) error {
 	switch cmd {
@@ -951,5 +1135,9 @@ func NewNeighborCmd() *cobra.Command {
 
 	neighborCmd.PersistentFlags().StringVarP(&subOpts.AddressFamily, "address-family", "a", "", "address family")
 	neighborCmd.PersistentFlags().StringVarP(&neighborsOpts.Transport, "transport", "t", "", "specifying a transport protocol")
+
+	//test := make([]string,0,0)
+	//err :=showNeighborRib("adj-in","172.16.2.10",test)
+	//fmt.Println("Err",err)
 	return neighborCmd
 }
