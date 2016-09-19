@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os/exec"
 	"github.com/pebbe/zmq4"
+	"strings"
 )
-
 
 func main (){
 
@@ -16,12 +16,13 @@ func main (){
 	for {
 		msg,_ := socket.Recv(0)
 		fmt.Println("MSG is",string(msg))
-		neighor := "172.16.2.10"
-		out,err := exec.Command("./gobgp","neighbor",neighor,"adj-in","-a","link-state","-j").Output()
+		string_msg := string(msg)
+		s := strings.Split(string_msg,":")
+		fmt.Println("Neighor is: ",s[1])
+		out,err := exec.Command("./gobgp","neighbor",s[1],"adj-in","-a","link-state","-j").Output()
 		if err != nil {
 			fmt.Println("",err)
 		}
-
 		socket.Send(string(out), 0)
 	}
 
